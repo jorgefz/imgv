@@ -15,8 +15,8 @@ Description
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
-#define IMGV_VERSION "1.0"
-#define IMGV_DATE "03/06/2021"
+#define IMGV_VERSION "1.1"
+#define IMGV_DATE "04/06/2021"
 
 const char* vshader_src = " "
 "#version 330 core \n"
@@ -41,6 +41,7 @@ const char* fshader_src = " "
 "	color = texColor; \n"
 "}; \n";
 
+double mscroll_y;
 
 typedef struct texture_struct {
 	unsigned int height, width, channels, id;
@@ -48,7 +49,6 @@ typedef struct texture_struct {
 
 GLFWwindow* WindowInit(GLuint width, GLuint height) {
 	GLFWwindow* window;
-	GLFWmonitor* monitor;
 
 	if (!glfwInit()) {
 		fprintf(stderr, "[GLFW] Fatal error: failed to load!\n");
@@ -128,7 +128,7 @@ Texture* texture_load(const char* filename) {
 	GLuint width, height, channels, tex_id;
 
 	stbi_set_flip_vertically_on_load(1);
-	const char* buff = stbi_load(filename, &width, &height, &channels, 4);
+	unsigned char* buff = stbi_load(filename, &width, &height, &channels, 4);
 	if (!buff) {
 		fprintf(stderr, "Error loading image '%s'\n", filename);
 		return NULL;
@@ -152,7 +152,7 @@ Texture* texture_load(const char* filename) {
 
 	Texture *tex = (Texture *)malloc(sizeof(Texture));
 	if (!tex) {
-		fprintf("Fatal error: could not allocate %u bytes\n", (GLuint)sizeof(Texture));
+		fprintf(stderr, "Fatal error: could not allocate %u bytes\n", (GLuint)sizeof(Texture));
 		return NULL;
 	}
 	tex->height = height;
@@ -162,14 +162,24 @@ Texture* texture_load(const char* filename) {
 	return tex;
 }
 
+void vertices_translate(float* vertex_data, int vertices, float dx, float dy) {
+	for (int i = 0; i != vertices; ++i) {
+		vertex_data[0 + 4*i] += dx;
+		vertex_data[1 + 4*i] += dy;
+	}
+}
+
+void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
+	mscroll_y = yoffset;
+}
+
+
 int main(int argc, const char* argv[]) {
+	
+	printf("IMGV version %s (%s)\n", IMGV_VERSION, IMGV_DATE);
 
 	if (argc != 2) {
 		fprintf(stderr, "Error: missing input image\n");
-		return 1;
-	}
-	if (strcmp(argv[1], "-v") == 0) {
-		printf("IMGV version %s (%s)\n", IMGV_VERSION, IMGV_DATE);
 		return 1;
 	}
 
@@ -220,13 +230,61 @@ int main(int argc, const char* argv[]) {
 	glCreateVertexArrays(1, &vao_id);
 	update_vao_attributes(2, 2, sizeof(float) * 4);
 
+	double mouse_cur[2], mouse_prev[2];
+	int lmb_state = GLFW_RELEASE, lmb_state_prev = GLFW_RELEASE;
+
+	glfwGetCursorPos(window, &mouse_cur[0], &mouse_cur[1]);
+	mouse_cur[0] = 2.0f * (mouse_cur[0] / (float)w_width) - 1.0f;
+	mouse_cur[1] = - 2.0f * (mouse_cur[1] / (float)w_height) + 1.0f;
+
+	mouse_prev[0] = mouse_cur[0];
+	mouse_prev[1] = mouse_cur[1];
+	
+	lmb_state = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT);
+	lmb_state_prev = lmb_state;
+
+	glfwSetScrollCallback(window, scroll_callback);
+
+	float zoom = 1.0f;
+
 	// Rendering Loop
 	while (!glfwWindowShouldClose(window)) {
 		glClear(GL_COLOR_BUFFER_BIT);
 
+		lmb_state_prev = lmb_state;
+		lmb_state = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT);
+
+		mouse_prev[0] = mouse_cur[0];
+		mouse_prev[1] = mouse_cur[1];
+		glfwGetCursorPos(window, &mouse_cur[0], &mouse_cur[1]);
+		mouse_cur[0] = 2.0f * ( mouse_cur[0] / (float)w_width ) - 1.0f;
+		mouse_cur[1] = - 2.0f * ( mouse_cur[1] / (float)w_height ) + 1.0f;
+		
+
+		// Moving image
+		if (lmb_state == GLFW_PRESS && lmb_state_prev == GLFW_PRESS) {
+			double dx = mouse_cur[0] - mouse_prev[0];
+			double dy = mouse_cur[1] - mouse_prev[1];
+			vertices_translate(vertices, 4, (float)dx, (float)dy);
+			glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+		}
+
 		//update window dimensions
 		glfwGetFramebufferSize(window, &w_width, &w_height);
 		glViewport(0, 0, w_width, w_height);
+
+		// Zooming in/out
+		/*
+		if (mscroll_y < 0) {
+			zoom *= 0.99f;
+			glViewport(0, 0, (GLuint)(w_width * zoom), (GLuint)(w_height * zoom));
+		}
+		else if (mscroll_y > 0) {
+			zoom *= 1.01f;
+			glViewport(0, 0, (GLuint)(w_width * zoom), (GLuint)(w_height * zoom));
+		}
+		else printf("haha yes\n");
+		*/
 
 		glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
 		update_vao_attributes(2, 2, sizeof(float) * 4);
@@ -241,7 +299,7 @@ int main(int argc, const char* argv[]) {
 	glDeleteBuffers(1, &vbo_id);
 	glDeleteBuffers(1, &ibo_id);
 	glDeleteVertexArrays(1, &vao_id);
-	glDeleteProgram(&shader_id);
+	glDeleteProgram(shader_id);
 	glDeleteTextures(1, &tex->id);
 	glfwTerminate();
 
