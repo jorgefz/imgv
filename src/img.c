@@ -7,12 +7,16 @@ Description
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "GL/glew.h"
 #include "GLFW/glfw3.h"
 
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
+
+#define IMGV_VERSION "1.0"
+#define IMGV_DATE "03/06/2021"
 
 const char* vshader_src = " "
 "#version 330 core \n"
@@ -36,6 +40,11 @@ const char* fshader_src = " "
 "		discard; \n"
 "	color = texColor; \n"
 "}; \n";
+
+
+typedef struct texture_struct {
+	unsigned int height, width, channels, id;
+} Texture;
 
 GLFWwindow* WindowInit(GLuint width, GLuint height) {
 	GLFWwindow* window;
@@ -97,14 +106,32 @@ GLuint shader_compile(unsigned int type, const char* src) {
 	return id;
 }
 
-GLuint texture_load(const char* filename) {
+GLuint shader_create() {
+	GLuint shader_id = glCreateProgram();
+	GLuint vs_id = shader_compile(GL_VERTEX_SHADER, vshader_src);
+	GLuint fs_id = shader_compile(GL_FRAGMENT_SHADER, fshader_src);
+	if (vs_id == 0 || fs_id == 0) return 1;
+
+	glAttachShader(shader_id, vs_id);
+	glAttachShader(shader_id, fs_id);
+	glLinkProgram(shader_id);
+	glValidateProgram(shader_id);
+	// shader data has been copied to program and is no longer necessary.
+	glDeleteShader(vs_id);
+	glDeleteShader(fs_id);
+	glUseProgram(shader_id);
+
+	return shader_id;
+}
+
+Texture* texture_load(const char* filename) {
 	GLuint width, height, channels, tex_id;
 
 	stbi_set_flip_vertically_on_load(1);
 	const char* buff = stbi_load(filename, &width, &height, &channels, 4);
 	if (!buff) {
 		fprintf(stderr, "Error loading image '%s'\n", filename);
-		return 0;
+		return NULL;
 	}
 	printf(" Loaded '%s'\n", filename);
 	printf(" %dx%d (%d channels)\n", width, height, channels);
@@ -122,8 +149,17 @@ GLuint texture_load(const char* filename) {
 	
 	glBindTexture(GL_TEXTURE_2D, tex_id);
 	if (buff) stbi_image_free(buff);
-	
-	return tex_id;
+
+	Texture *tex = (Texture *)malloc(sizeof(Texture));
+	if (!tex) {
+		fprintf("Fatal error: could not allocate %u bytes\n", (GLuint)sizeof(Texture));
+		return NULL;
+	}
+	tex->height = height;
+	tex->width = width;
+	tex->channels = channels;
+	tex->id = tex_id;
+	return tex;
 }
 
 int main(int argc, const char* argv[]) {
@@ -132,40 +168,40 @@ int main(int argc, const char* argv[]) {
 		fprintf(stderr, "Error: missing input image\n");
 		return 1;
 	}
+	if (strcmp(argv[1], "-v") == 0) {
+		printf("IMGV version %s (%s)\n", IMGV_VERSION, IMGV_DATE);
+		return 1;
+	}
 
 	const char* filename = argv[1];
 	const char* buff;
 	int width, height, channels;
+	GLuint w_height = 720, w_width = 1280;
 
-	GLFWwindow* window = WindowInit(1280, 720);
+	GLFWwindow* window = WindowInit(w_width, w_height);
 	if (!window) return 1;
 
 	// Shader
-	GLuint shader_id = glCreateProgram();
-	GLuint vs_id = shader_compile(GL_VERTEX_SHADER, vshader_src);
-	GLuint fs_id = shader_compile(GL_FRAGMENT_SHADER, fshader_src);
-	if (vs_id == 0 || fs_id == 0) return 1;
-
-	glAttachShader(shader_id, vs_id);
-	glAttachShader(shader_id, fs_id);
-	glLinkProgram(shader_id);
-	glValidateProgram(shader_id);
-	// shader data has been copied to program and is no longer necessary.
-	glDeleteShader(vs_id);
-	glDeleteShader(fs_id);
-	glUseProgram(shader_id);
+	GLuint shader_id = shader_create();
+	if (shader_id == 0) return 1;
 
 	// Main image texture
-	GLuint tex_id = texture_load(filename);
-	if (tex_id == 0) return 1;
+	Texture *tex = texture_load(filename);
+	if (!tex) return 1;
 
 	// Vertex Buffer Object
 	GLuint vbo_id;
+	float fx = (float)tex->width / (float)w_width;
+	float fy = (float)tex->height / (float)w_height;
+	//Force to fit on screen
+	float scale = 1.0f/fx < 1.0f/fy ? 1.0f/fx : 1.0f/fy;
+	fx *= scale; fy *= scale;
+
 	float vertices[] = {
-		-1.0f, -1.0f,  0.0f, 0.0f,
-		 1.0f, -1.0f,  1.0f, 0.0f,
-		 1.0f, 1.0f,   1.0f, 1.0f,
-		-1.0f, 1.0f,   0.0f, 1.0f
+		-1.0f * fx, -1.0f * fy,  0.0f, 0.0f,
+		 1.0f * fx, -1.0f * fy,  1.0f, 0.0f,
+		 1.0f * fx,  1.0f * fy,  1.0f, 1.0f,
+		-1.0f * fx,  1.0f * fy,  0.0f, 1.0f
 	};
 
 	glGenBuffers(1, &vbo_id);
@@ -187,7 +223,16 @@ int main(int argc, const char* argv[]) {
 	// Rendering Loop
 	while (!glfwWindowShouldClose(window)) {
 		glClear(GL_COLOR_BUFFER_BIT);
+
+		//update window dimensions
+		glfwGetFramebufferSize(window, &w_width, &w_height);
+		glViewport(0, 0, w_width, w_height);
+
+		glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+		update_vao_attributes(2, 2, sizeof(float) * 4);
+
 		glDrawElements(GL_TRIANGLES, sizeof(indices), GL_UNSIGNED_INT, 0);
+
 		glfwSwapBuffers(window);
 		glfwPollEvents();
 	}
@@ -197,7 +242,7 @@ int main(int argc, const char* argv[]) {
 	glDeleteBuffers(1, &ibo_id);
 	glDeleteVertexArrays(1, &vao_id);
 	glDeleteProgram(&shader_id);
-	glDeleteTextures(1, &tex_id);
+	glDeleteTextures(1, &tex->id);
 	glfwTerminate();
 
 	return 0;
