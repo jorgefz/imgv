@@ -1,3 +1,4 @@
-bin/
-bin-int/
+bin/*
+bin-int/*
 .vs/
+*.sln

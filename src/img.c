@@ -260,7 +260,6 @@ int main(int argc, const char* argv[]) {
 		mouse_cur[0] = 2.0f * ( mouse_cur[0] / (float)w_width ) - 1.0f;
 		mouse_cur[1] = - 2.0f * ( mouse_cur[1] / (float)w_height ) + 1.0f;
 		
-
 		// Moving image
 		if (lmb_state == GLFW_PRESS && lmb_state_prev == GLFW_PRESS) {
 			double dx = mouse_cur[0] - mouse_prev[0];
